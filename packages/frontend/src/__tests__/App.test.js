@@ -44,7 +44,7 @@ describe('App', () => {
         description: 'Description 2',
         completed: 1,
         priority: 'low',
-        due_date: null,
+        due_date: '2026-02-15',
       },
     ];
 
