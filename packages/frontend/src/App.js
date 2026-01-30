@@ -1,126 +1,231 @@
 import React, { useState, useEffect } from 'react';
-import './App.css';
+import {
+  ThemeProvider,
+  CssBaseline,
+  Container,
+  Box,
+  Typography,
+  Fab,
+  Stack,
+  CircularProgress,
+  Snackbar,
+  Alert,
+  AppBar,
+  Toolbar,
+} from '@mui/material';
+import { Add as AddIcon } from '@mui/icons-material';
+import theme from './theme';
+import taskService from './services/taskService';
+import TaskCard from './components/TaskCard';
+import TaskForm from './components/TaskForm';
+import TaskFilters from './components/TaskFilters';
+import ConfirmDialog from './components/ConfirmDialog';
 
 function App() {
-  const [data, setData] = useState([]);
+  const [tasks, setTasks] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState(null);
-  const [newItem, setNewItem] = useState('');
+  const [filters, setFilters] = useState({
+    status: 'all',
+    priority: '',
+    sortBy: 'created_at',
+    sortOrder: 'desc',
+  });
+  const [formOpen, setFormOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
+  const [deleteDialog, setDeleteDialog] = useState({ open: false, taskId: null });
+  const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
 
+  // Load tasks on mount and when filters change
   useEffect(() => {
-    fetchData();
-  }, []);
+    loadTasks();
+  }, [filters]);
 
-  const fetchData = async () => {
+  const loadTasks = async () => {
     try {
       setLoading(true);
-      const response = await fetch('/api/items');
-      if (!response.ok) {
-        throw new Error('Network response was not ok');
-      }
-      const result = await response.json();
-      setData(result);
-      setError(null);
-    } catch (err) {
-      setError('Failed to fetch data: ' + err.message);
-      console.error('Error fetching data:', err);
+      const data = await taskService.getAll(filters);
+      setTasks(data);
+    } catch (error) {
+      showSnackbar('Failed to load tasks', 'error');
+      console.error('Error loading tasks:', error);
     } finally {
       setLoading(false);
     }
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!newItem.trim()) return;
+  const showSnackbar = (message, severity = 'success') => {
+    setSnackbar({ open: true, message, severity });
+  };
 
+  const handleSnackbarClose = () => {
+    setSnackbar({ ...snackbar, open: false });
+  };
+
+  const handleCreateTask = () => {
+    setEditingTask(null);
+    setFormOpen(true);
+  };
+
+  const handleEditTask = (task) => {
+    setEditingTask(task);
+    setFormOpen(true);
+  };
+
+  const handleFormClose = () => {
+    setFormOpen(false);
+    setEditingTask(null);
+  };
+
+  const handleSaveTask = async (taskData) => {
     try {
-      const response = await fetch('/api/items', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ name: newItem }),
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to add item');
+      if (editingTask) {
+        await taskService.update(editingTask.id, taskData);
+        showSnackbar('Task updated successfully');
+      } else {
+        await taskService.create(taskData);
+        showSnackbar('Task created successfully');
       }
-
-      const result = await response.json();
-      setData([...data, result]);
-      setNewItem('');
-    } catch (err) {
-      setError('Error adding item: ' + err.message);
-      console.error('Error adding item:', err);
+      handleFormClose();
+      loadTasks();
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to save task', 'error');
+      console.error('Error saving task:', error);
     }
   };
 
-  const handleDelete = async (itemId) => {
+  const handleDeleteClick = (taskId) => {
+    setDeleteDialog({ open: true, taskId });
+  };
+
+  const handleDeleteConfirm = async () => {
     try {
-      const response = await fetch(`/api/items/${itemId}`, {
-        method: 'DELETE',
-      });
-
-      if (!response.ok) {
-        throw new Error('Failed to delete item');
-      }
-
-      setData(data.filter(item => item.id !== itemId));
-      setError(null);
-    } catch (err) {
-      setError('Error deleting item: ' + err.message);
-      console.error('Error deleting item:', err);
+      await taskService.delete(deleteDialog.taskId);
+      showSnackbar('Task deleted successfully');
+      setDeleteDialog({ open: false, taskId: null });
+      loadTasks();
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to delete task', 'error');
+      console.error('Error deleting task:', error);
     }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteDialog({ open: false, taskId: null });
+  };
+
+  const handleToggleComplete = async (taskId) => {
+    try {
+      await taskService.toggleComplete(taskId);
+      showSnackbar('Task updated');
+      loadTasks();
+    } catch (error) {
+      showSnackbar(error.message || 'Failed to update task', 'error');
+      console.error('Error toggling task:', error);
+    }
+  };
+
+  const handleFilterChange = (newFilters) => {
+    setFilters(newFilters);
   };
 
   return (
-    <div className="App">
-      <header className="App-header">
-        <h1>To Do App</h1>
-        <p>Keep track of your tasks</p>
-      </header>
+    <ThemeProvider theme={theme}>
+      <CssBaseline />
 
-      <main>
-        <section className="add-item-section">
-          <h2>Add New Item</h2>
-          <form onSubmit={handleSubmit}>
-            <input
-              type="text"
-              value={newItem}
-              onChange={(e) => setNewItem(e.target.value)}
-              placeholder="Enter item name"
-            />
-            <button type="submit">Add Item</button>
-          </form>
-        </section>
+      <AppBar position="static" elevation={0}>
+        <Toolbar>
+          <Typography variant="h6" component="h1" sx={{ flexGrow: 1 }}>
+            Task Manager
+          </Typography>
+        </Toolbar>
+      </AppBar>
 
-        <section className="items-section">
-          <h2>Items from Database</h2>
-          {loading && <p>Loading data...</p>}
-          {error && <p className="error">{error}</p>}
-          {!loading && !error && (
-            <ul>
-              {data.length > 0 ? (
-                data.map((item) => (
-                  <li key={item.id}>
-                    <span>{item.name}</span>
-                    <button 
-                      onClick={() => handleDelete(item.id)}
-                      className="delete-btn"
-                      type="button"
-                    >
-                      Delete
-                    </button>
-                  </li>
-                ))
-              ) : (
-                <p>No items found. Add some!</p>
-              )}
-            </ul>
-          )}
-        </section>
-      </main>
-    </div>
+      <Container maxWidth="lg" sx={{ py: 4 }}>
+        <Box sx={{ mb: 4 }}>
+          <Typography variant="h4" component="h2" gutterBottom>
+            My Tasks
+          </Typography>
+          <Typography variant="body1" color="text.secondary">
+            Manage your tasks efficiently
+          </Typography>
+        </Box>
+
+        <TaskFilters filters={filters} onFilterChange={handleFilterChange} />
+
+        {loading ? (
+          <Box sx={{ display: 'flex', justifyContent: 'center', py: 8 }}>
+            <CircularProgress />
+          </Box>
+        ) : tasks.length === 0 ? (
+          <Box sx={{ textAlign: 'center', py: 8 }}>
+            <Typography variant="h6" color="text.secondary" gutterBottom>
+              No tasks found
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+              {filters.status !== 'all' || filters.priority
+                ? 'Try adjusting your filters or create a new task'
+                : 'Get started by creating your first task'}
+            </Typography>
+          </Box>
+        ) : (
+          <Stack spacing={2}>
+            {tasks.map((task) => (
+              <TaskCard
+                key={task.id}
+                task={task}
+                onEdit={handleEditTask}
+                onDelete={handleDeleteClick}
+                onToggleComplete={handleToggleComplete}
+              />
+            ))}
+          </Stack>
+        )}
+
+        <Fab
+          color="primary"
+          aria-label="Add new task"
+          sx={{
+            position: 'fixed',
+            bottom: 24,
+            right: 24,
+          }}
+          onClick={handleCreateTask}
+        >
+          <AddIcon />
+        </Fab>
+
+        <TaskForm
+          open={formOpen}
+          task={editingTask}
+          onClose={handleFormClose}
+          onSave={handleSaveTask}
+        />
+
+        <ConfirmDialog
+          open={deleteDialog.open}
+          title="Delete Task"
+          message="Are you sure you want to delete this task? This action cannot be undone."
+          onConfirm={handleDeleteConfirm}
+          onCancel={handleDeleteCancel}
+        />
+
+        <Snackbar
+          open={snackbar.open}
+          autoHideDuration={4000}
+          onClose={handleSnackbarClose}
+          anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+        >
+          <Alert
+            onClose={handleSnackbarClose}
+            severity={snackbar.severity}
+            variant="filled"
+            sx={{ width: '100%' }}
+          >
+            {snackbar.message}
+          </Alert>
+        </Snackbar>
+      </Container>
+    </ThemeProvider>
   );
 }
 

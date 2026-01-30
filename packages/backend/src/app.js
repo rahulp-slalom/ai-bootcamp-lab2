@@ -1,7 +1,16 @@
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
-const Database = require('better-sqlite3');
+const {
+  getAllTasks,
+  getTaskById,
+  createTask,
+  updateTask,
+  toggleTaskCompletion,
+  deleteTask,
+} = require('./db');
+const { validate, createTaskSchema, updateTaskSchema } = require('./middleware/validation');
+const { errorHandler, notFoundHandler } = require('./middleware/errorHandler');
 
 // Initialize express app
 const app = express();
@@ -11,83 +20,147 @@ app.use(cors());
 app.use(express.json());
 app.use(morgan('dev'));
 
-// Initialize in-memory SQLite database
-const db = new Database(':memory:');
-
-// Create tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-  )
-`);
-
-// Insert some initial data
-const initialItems = ['Item 1', 'Item 2', 'Item 3'];
-const insertStmt = db.prepare('INSERT INTO items (name) VALUES (?)');
-
-initialItems.forEach(item => {
-  insertStmt.run(item);
-});
-
-console.log('In-memory database initialized with sample data');
-
 // API Routes
-app.get('/api/items', (req, res) => {
+
+/**
+ * GET /api/tasks - Get all tasks with optional filtering and sorting
+ * Query params: status, priority, sortBy, sortOrder
+ */
+app.get('/api/tasks', (req, res, next) => {
   try {
-    const items = db.prepare('SELECT * FROM items ORDER BY created_at DESC').all();
-    res.json(items);
+    const { status, priority, sortBy, sortOrder } = req.query;
+    const tasks = getAllTasks({ status, priority, sortBy, sortOrder });
+    res.json({
+      success: true,
+      data: tasks,
+      count: tasks.length,
+    });
   } catch (error) {
-    console.error('Error fetching items:', error);
-    res.status(500).json({ error: 'Failed to fetch items' });
+    next(error);
   }
 });
 
-app.post('/api/items', (req, res) => {
-  try {
-    const { name } = req.body;
-
-    if (!name || typeof name !== 'string' || name.trim() === '') {
-      return res.status(400).json({ error: 'Item name is required' });
-    }
-
-    const result = insertStmt.run(name);
-    const id = result.lastInsertRowid;
-
-    const newItem = db.prepare('SELECT * FROM items WHERE id = ?').get(id);
-    res.status(201).json(newItem);
-  } catch (error) {
-    console.error('Error creating item:', error);
-    res.status(500).json({ error: 'Failed to create item' });
-  }
-});
-
-app.delete('/api/items/:id', (req, res) => {
+/**
+ * GET /api/tasks/:id - Get a single task by ID
+ */
+app.get('/api/tasks/:id', (req, res, next) => {
   try {
     const { id } = req.params;
+    const task = getTaskById(parseInt(id, 10));
 
-    if (!id || isNaN(parseInt(id))) {
-      return res.status(400).json({ error: 'Valid item ID is required' });
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        error: 'Task not found',
+      });
     }
 
-    const existingItem = db.prepare('SELECT * FROM items WHERE id = ?').get(id);
-    if (!existingItem) {
-      return res.status(404).json({ error: 'Item not found' });
-    }
-
-    const deleteStmt = db.prepare('DELETE FROM items WHERE id = ?');
-    const result = deleteStmt.run(id);
-
-    if (result.changes > 0) {
-      res.json({ message: 'Item deleted successfully', id: parseInt(id) });
-    } else {
-      res.status(404).json({ error: 'Item not found' });
-    }
+    res.json({
+      success: true,
+      data: task,
+    });
   } catch (error) {
-    console.error('Error deleting item:', error);
-    res.status(500).json({ error: 'Failed to delete item' });
+    next(error);
   }
 });
 
-module.exports = { app, db, insertStmt };
+/**
+ * POST /api/tasks - Create a new task
+ */
+app.post('/api/tasks', validate(createTaskSchema), (req, res, next) => {
+  try {
+    const task = createTask(req.validatedBody);
+
+    res.status(201).json({
+      success: true,
+      data: task,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PUT /api/tasks/:id - Update a task
+ */
+app.put('/api/tasks/:id', validate(updateTaskSchema), (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const task = updateTask(parseInt(id, 10), req.validatedBody);
+
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        error: 'Task not found',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: task,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * PATCH /api/tasks/:id/complete - Toggle task completion
+ */
+app.patch('/api/tasks/:id/complete', (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const task = toggleTaskCompletion(parseInt(id, 10));
+
+    if (!task) {
+      return res.status(404).json({
+        success: false,
+        error: 'Task not found',
+      });
+    }
+
+    res.json({
+      success: true,
+      data: task,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * DELETE /api/tasks/:id - Delete a task
+ */
+app.delete('/api/tasks/:id', (req, res, next) => {
+  try {
+    const { id } = req.params;
+    const deleted = deleteTask(parseInt(id, 10));
+
+    if (!deleted) {
+      return res.status(404).json({
+        success: false,
+        error: 'Task not found',
+      });
+    }
+
+    res.json({
+      success: true,
+      message: 'Task deleted successfully',
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
+
+// 404 handler
+app.use(notFoundHandler);
+
+// Error handler
+app.use(errorHandler);
+
+module.exports = app;
